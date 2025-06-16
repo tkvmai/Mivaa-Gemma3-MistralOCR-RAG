@@ -256,7 +256,7 @@ def main():
     if "api_notification_dismissed" not in st.session_state:
         st.session_state.api_notification_dismissed = False
 
-    # --- Optimization: Cache Mistral client and Google API check in session state ---
+    # --- Optimization: Cache Mistral client in session state ---
     if "mistral_client" not in st.session_state or "mistral_status" not in st.session_state:
         mistral_client = None
         mistral_status = False
@@ -269,18 +269,23 @@ def main():
         mistral_client = st.session_state.mistral_client
         mistral_status = st.session_state.mistral_status
 
-    if "google_status" not in st.session_state or "google_api_checked" not in st.session_state:
+    # --- Optimization: Only check Google API if key changes, cache result ---
+    if "google_api_key_checked" not in st.session_state or st.session_state.get("last_google_api_key") != google_api_key:
         google_status = False
         google_api_checked = False
+        google_api_message = ""
         if google_api_key:
             is_valid, message = test_google_api(google_api_key)
             google_status = is_valid
             google_api_checked = True
-            st.session_state.google_api_message = message
+            google_api_message = message
         st.session_state.google_status = google_status
         st.session_state.google_api_checked = google_api_checked
+        st.session_state.google_api_message = google_api_message
+        st.session_state.last_google_api_key = google_api_key
     else:
         google_status = st.session_state.google_status
+        google_api_message = st.session_state.google_api_message
 
     notification_msgs = []
     if mistral_status:
@@ -288,9 +293,9 @@ def main():
     else:
         notification_msgs.append(("error", "❌ Mistral API key not found or invalid."))
     if google_status:
-        notification_msgs.append(("success", f"✅ Google API {st.session_state.get('google_api_message', 'connected successfully')}"))
+        notification_msgs.append(("success", f"✅ Google API {google_api_message or 'connected successfully'}"))
     else:
-        notification_msgs.append(("error", f"❌ Google API: {st.session_state.get('google_api_message', 'not connected')}"))
+        notification_msgs.append(("error", f"❌ Google API: {google_api_message or 'not connected'}"))
     if not mistral_status:
         notification_msgs.append(("warning", "⚠️ Valid Mistral API key required for document processing"))
     if not google_status:
