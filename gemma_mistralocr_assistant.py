@@ -256,30 +256,41 @@ def main():
     if "api_notification_dismissed" not in st.session_state:
         st.session_state.api_notification_dismissed = False
 
-    mistral_client = None
-    mistral_status = False
-    google_status = False
+    # --- Optimization: Cache Mistral client and Google API check in session state ---
+    if "mistral_client" not in st.session_state or "mistral_status" not in st.session_state:
+        mistral_client = None
+        mistral_status = False
+        if api_key:
+            mistral_client = initialize_mistral_client(api_key)
+            mistral_status = mistral_client is not None
+        st.session_state.mistral_client = mistral_client
+        st.session_state.mistral_status = mistral_status
+    else:
+        mistral_client = st.session_state.mistral_client
+        mistral_status = st.session_state.mistral_status
+
+    if "google_status" not in st.session_state or "google_api_checked" not in st.session_state:
+        google_status = False
+        google_api_checked = False
+        if google_api_key:
+            is_valid, message = test_google_api(google_api_key)
+            google_status = is_valid
+            google_api_checked = True
+            st.session_state.google_api_message = message
+        st.session_state.google_status = google_status
+        st.session_state.google_api_checked = google_api_checked
+    else:
+        google_status = st.session_state.google_status
+
     notification_msgs = []
-    if api_key:
-        mistral_client = initialize_mistral_client(api_key)
-        if mistral_client:
-            mistral_status = True
-            notification_msgs.append(("success", "✅ Mistral API connected successfully"))
-        else:
-            notification_msgs.append(("error", "❌ Mistral API key not found or invalid."))
+    if mistral_status:
+        notification_msgs.append(("success", "✅ Mistral API connected successfully"))
     else:
-        notification_msgs.append(("error", "❌ Mistral API key not found in environment variables."))
-
-    if google_api_key:
-        is_valid, message = test_google_api(google_api_key)
-        if is_valid:
-            google_status = True
-            notification_msgs.append(("success", f"✅ Google API {message}"))
-        else:
-            notification_msgs.append(("error", f"❌ Google API: {message}"))
+        notification_msgs.append(("error", "❌ Mistral API key not found or invalid."))
+    if google_status:
+        notification_msgs.append(("success", f"✅ Google API {st.session_state.get('google_api_message', 'connected successfully')}"))
     else:
-        notification_msgs.append(("error", "❌ Google API key not found in environment variables."))
-
+        notification_msgs.append(("error", f"❌ Google API: {st.session_state.get('google_api_message', 'not connected')}"))
     if not mistral_status:
         notification_msgs.append(("warning", "⚠️ Valid Mistral API key required for document processing"))
     if not google_status:
@@ -297,14 +308,16 @@ def main():
             st.session_state.api_notification_dismissed = True
             st.rerun()
 
-    # Main area: Two-pane layout
-    st.title("Document OCR & Chat")
-    st.write("")
-
-    # Fetch all documents from the database
-    session = SessionLocal()
-    docs = session.query(Document).order_by(Document.created_at.desc()).all()
-    session.close()
+    # --- Optimization: Cache document list in session state ---
+    def fetch_docs():
+        session = SessionLocal()
+        docs = session.query(Document).order_by(Document.created_at.desc()).all()
+        session.close()
+        return docs
+    if "docs" not in st.session_state or st.session_state.get("docs_dirty", True):
+        st.session_state.docs = fetch_docs()
+        st.session_state.docs_dirty = False
+    docs = st.session_state.docs
 
     # UI state for selected documents and menu
     if "selected_doc_ids" not in st.session_state:
@@ -402,6 +415,7 @@ def main():
                             st.error(f"Processing error for {doc.get('filename', doc.get('document_url', 'URL'))}: {str(e)}")
                 session.close()
                 st.session_state.show_upload = False
+                st.session_state.docs_dirty = True
                 st.rerun()
         # Select all sources
         all_selected = set(st.session_state.selected_doc_ids) == set([doc.id for doc in docs])
@@ -439,6 +453,7 @@ def main():
                         session.commit()
                         session.close()
                         st.session_state.rename_doc_id = None
+                        st.session_state.docs_dirty = True
                         st.rerun()
                 with col_delete:
                     if st.button("Delete", key=f"delete_btn_{doc.id}"):
@@ -449,6 +464,7 @@ def main():
                         if doc.id in st.session_state.selected_doc_ids:
                             st.session_state.selected_doc_ids.remove(doc.id)
                         st.session_state.rename_doc_id = None
+                        st.session_state.docs_dirty = True
                         st.rerun()
 
     with right_col:
