@@ -422,31 +422,24 @@ def main():
                 st.session_state.show_upload = False
                 st.session_state.docs_dirty = True
                 st.rerun()
-        # Select all sources
-        all_selected = set(st.session_state.selected_doc_ids) == set([doc.id for doc in docs])
-        if st.checkbox("Select all sources", value=all_selected, key="select_all_sources"):
-            st.session_state.selected_doc_ids = [doc.id for doc in docs]
-        else:
-            if not all_selected:
-                st.session_state.selected_doc_ids = []
-        # List documents with checkboxes, icons, and 3-dot menu
+        # Multiselect for document selection
+        doc_options = []
+        doc_id_to_label = {}
         for doc in docs:
             icon = "📄" if (doc.filename and doc.filename.lower().endswith(".pdf")) else ("🖼️" if doc.filetype == "image_url" else "🌐")
-            checked = doc.id in st.session_state.selected_doc_ids
-            cols = st.columns([0.08, 0.08, 0.7, 0.14])
-            with cols[0]:
-                st.checkbox("", value=checked, key=f"doc_select_{doc.id}", on_change=lambda d=doc: st.session_state.selected_doc_ids.append(d.id) if d.id not in st.session_state.selected_doc_ids else st.session_state.selected_doc_ids.remove(d.id))
-            with cols[1]:
-                st.markdown(icon)
-            with cols[2]:
-                if st.button(doc.filename or doc.url or f"Document {doc.id}", key=f"select_{doc.id}"):
-                    if doc.id not in st.session_state.selected_doc_ids:
-                        st.session_state.selected_doc_ids.append(doc.id)
-            with cols[3]:
-                menu_key = f"menu_{doc.id}"
-                if st.button("⋮", key=menu_key):
-                    st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
-                    st.session_state.rename_value = doc.filename or ""
+            label = f"{icon} {doc.filename or doc.url or f'Document {doc.id}'}"
+            doc_options.append(label)
+            doc_id_to_label[doc.id] = label
+        label_to_doc_id = {v: k for k, v in doc_id_to_label.items()}
+        selected_labels = st.multiselect(
+            "Select sources:",
+            options=doc_options,
+            default=[doc_id_to_label[doc_id] for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label],
+            key="doc_multiselect"
+        )
+        st.session_state.selected_doc_ids = [label_to_doc_id[label] for label in selected_labels]
+        # 3-dot menu for rename/delete
+        for doc in docs:
             if st.session_state.rename_doc_id == doc.id:
                 new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
                 col_rename, col_delete = st.columns(2)
@@ -471,6 +464,12 @@ def main():
                         st.session_state.rename_doc_id = None
                         st.session_state.docs_dirty = True
                         st.rerun()
+            else:
+                # Show 3-dot menu button next to each doc
+                menu_key = f"menu_{doc.id}"
+                if st.button("⋮", key=menu_key):
+                    st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
+                    st.session_state.rename_value = doc.filename or ""
 
     with right_col:
         selected_docs = [d for d in docs if d.id in st.session_state.selected_doc_ids]
