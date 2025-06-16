@@ -422,7 +422,7 @@ def main():
                 st.session_state.show_upload = False
                 st.session_state.docs_dirty = True
                 st.rerun()
-        # Multiselect for document selection inside a form
+        # Multiselect for document selection inside a form (robust with temp state)
         doc_options = []
         doc_id_to_label = {}
         for doc in docs:
@@ -432,16 +432,22 @@ def main():
             doc_id_to_label[doc.id] = label
         label_to_doc_id = {v: k for k, v in doc_id_to_label.items()}
         valid_selected_doc_ids = [doc_id for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label]
+        # Use a temp session state variable for the form selection
+        if "temp_selected_doc_ids" not in st.session_state:
+            st.session_state.temp_selected_doc_ids = valid_selected_doc_ids
         with st.form("doc_select_form"):
-            selected_labels = st.multiselect(
+            temp_selected_labels = st.multiselect(
                 "Select sources:",
                 options=doc_options,
-                default=[doc_id_to_label[doc_id] for doc_id in valid_selected_doc_ids],
+                default=[doc_id_to_label[doc_id] for doc_id in st.session_state.temp_selected_doc_ids if doc_id in doc_id_to_label],
                 key="doc_multiselect"
             )
             confirm = st.form_submit_button("Confirm Selection")
+        # Always update the temp variable with the current form selection
+        st.session_state.temp_selected_doc_ids = [label_to_doc_id[label] for label in temp_selected_labels]
+        # Only update the main selection on confirm
         if confirm:
-            st.session_state.selected_doc_ids = [label_to_doc_id[label] for label in selected_labels]
+            st.session_state.selected_doc_ids = st.session_state.temp_selected_doc_ids.copy()
         # 3-dot menu for rename/delete
         for doc in docs:
             if st.session_state.rename_doc_id == doc.id:
