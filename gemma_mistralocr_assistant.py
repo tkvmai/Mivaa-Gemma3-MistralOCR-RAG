@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import datetime
+import time
 
 # Load environment variables from .env if present
 load_dotenv(find_dotenv())
@@ -251,34 +252,52 @@ def main():
 
     st.set_page_config(page_title="Document OCR & Chat", layout="wide")
 
-    # API connection status notifications
+    # API connection status notifications (show briefly)
+    if "show_api_notification" not in st.session_state:
+        st.session_state.show_api_notification = True
+        st.session_state.api_notification_time = time.time()
+
     mistral_client = None
     mistral_status = False
     google_status = False
+    notification_msgs = []
     if api_key:
         mistral_client = initialize_mistral_client(api_key)
         if mistral_client:
             mistral_status = True
-            st.success("✅ Mistral API connected successfully")
+            notification_msgs.append(("success", "✅ Mistral API connected successfully"))
         else:
-            st.error("❌ Mistral API key not found or invalid.")
+            notification_msgs.append(("error", "❌ Mistral API key not found or invalid."))
     else:
-        st.error("❌ Mistral API key not found in environment variables.")
+        notification_msgs.append(("error", "❌ Mistral API key not found in environment variables."))
 
     if google_api_key:
         is_valid, message = test_google_api(google_api_key)
         if is_valid:
             google_status = True
-            st.success(f"✅ Google API {message}")
+            notification_msgs.append(("success", f"✅ Google API {message}"))
         else:
-            st.error(f"❌ Google API: {message}")
+            notification_msgs.append(("error", f"❌ Google API: {message}"))
     else:
-        st.error("❌ Google API key not found in environment variables.")
+        notification_msgs.append(("error", "❌ Google API key not found in environment variables."))
 
     if not mistral_status:
-        st.warning("⚠️ Valid Mistral API key required for document processing")
+        notification_msgs.append(("warning", "⚠️ Valid Mistral API key required for document processing"))
     if not google_status:
-        st.warning("⚠️ Google API key required for chat functionality")
+        notification_msgs.append(("warning", "⚠️ Google API key required for chat functionality"))
+
+    # Show notifications for 3 seconds, then hide
+    if st.session_state.show_api_notification:
+        for level, msg in notification_msgs:
+            if level == "success":
+                st.success(msg)
+            elif level == "error":
+                st.error(msg)
+            elif level == "warning":
+                st.warning(msg)
+        if time.time() - st.session_state.api_notification_time > 3:
+            st.session_state.show_api_notification = False
+            st.experimental_rerun()
 
     # Main area: Two-pane layout
     st.title("Document OCR & Chat")
