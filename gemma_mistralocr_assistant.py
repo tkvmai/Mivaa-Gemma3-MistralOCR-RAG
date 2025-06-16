@@ -10,9 +10,12 @@ from mistralai.models import OCRResponse
 from dotenv import find_dotenv, load_dotenv
 import google.generativeai as genai
 
-# Global API key placeholders
-api_key = None
-google_api_key = None
+# Load environment variables from .env if present
+load_dotenv(find_dotenv())
+
+# Read API keys from environment
+api_key = os.environ.get("MISTRAL_API_KEY")
+google_api_key = os.environ.get("GOOGLE_API_KEY")
 
 
 def initialize_mistral_client(api_key):
@@ -226,169 +229,151 @@ def main():
 
     st.set_page_config(page_title="Document OCR & Chat", layout="wide")
 
-    # Sidebar: Authentication for API keys
+    # Sidebar: Show settings and API key status only
     with st.sidebar:
         st.header("Settings")
-
-        # API key inputs
-        api_key_tab1, api_key_tab2 = st.tabs(["Mistral API", "Google API"])
-
-        with api_key_tab1:
-            # Get Mistral API key from environment or user input
-            user_api_key = st.text_input("Mistral API Key", value=api_key if api_key else "", type="password")
-            if user_api_key:
-                api_key = user_api_key
-                os.environ["MISTRAL_API_KEY"] = api_key
-
-        with api_key_tab2:
-            # Get Google API key
-            user_google_api_key = st.text_input(
-                "Google API Key",
-                value=google_api_key if google_api_key else "",
-                type="password",
-                help="API key for Google Gemini to use for response generation"
-            )
-            if user_google_api_key:
-                google_api_key = user_google_api_key
-                os.environ["GOOGLE_API_KEY"] = google_api_key
 
         # Initialize Mistral client with the API key
         mistral_client = None
         if api_key:
             mistral_client = initialize_mistral_client(api_key)
             if mistral_client:
-                st.sidebar.success("✅ Mistral API connected successfully")
+                st.success("✅ Mistral API connected successfully")
+        else:
+            st.error("❌ Mistral API key not found in environment variables.")
 
         # Google API key validation
         if google_api_key:
             is_valid, message = test_google_api(google_api_key)
             if is_valid:
-                st.sidebar.success(f"✅ Google API {message}")
+                st.success(f"✅ Google API {message}")
             else:
-                st.sidebar.error(f"❌ Google API: {message}")
+                st.error(f"❌ Google API: {message}")
                 google_api_key = None
+        else:
+            st.error("❌ Google API key not found in environment variables.")
 
         # Display warnings for missing API keys
         if not api_key or mistral_client is None:
-            st.sidebar.warning("⚠️ Valid Mistral API key required for document processing")
+            st.warning("⚠️ Valid Mistral API key required for document processing")
 
         if not google_api_key:
-            st.sidebar.warning("⚠️ Google API key required for chat functionality")
+            st.warning("⚠️ Google API key required for chat functionality")
 
-        # Initialize session state
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+    # Initialize session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-        if "document_content" not in st.session_state:
-            st.session_state.document_content = ""
+    if "document_content" not in st.session_state:
+        st.session_state.document_content = ""
 
-        if "document_loaded" not in st.session_state:
-            st.session_state.document_loaded = False
+    if "document_loaded" not in st.session_state:
+        st.session_state.document_loaded = False
 
-        # Document upload section
-        st.subheader("Document Upload")
+    # Document upload section
+    st.subheader("Document Upload")
 
-        # Only show document upload if Mistral client is initialized
-        if mistral_client:
-            input_method = st.radio("Select Input Type:", ["PDF Upload", "Image Upload", "URL"])
+    # Only show document upload if Mistral client is initialized
+    if mistral_client:
+        input_method = st.radio("Select Input Type:", ["PDF Upload", "Image Upload", "URL"])
 
-            document_source = None
+        document_source = None
 
-            if input_method == "URL":
-                url = st.text_input("Document URL:")
-                if url and st.button("Load Document from URL"):
+        if input_method == "URL":
+            url = st.text_input("Document URL:")
+            if url and st.button("Load Document from URL"):
+                document_source = {
+                    "type": "document_url",
+                    "document_url": url
+                }
+
+        elif input_method == "PDF Upload":
+            uploaded_file = st.file_uploader("Choose PDF file", type=["pdf"])
+            if uploaded_file and st.button("Process PDF"):
+                content = uploaded_file.read()
+
+                # Save the uploaded PDF temporarily for display purposes
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(content)
+                    pdf_path = tmp.name
+
+                try:
+                    # Prepare document source for OCR processing
                     document_source = {
                         "type": "document_url",
-                        "document_url": url
+                        "document_url": upload_pdf(mistral_client, content, uploaded_file.name)
                     }
 
-            elif input_method == "PDF Upload":
-                uploaded_file = st.file_uploader("Choose PDF file", type=["pdf"])
-                if uploaded_file and st.button("Process PDF"):
-                    content = uploaded_file.read()
+                    # Display the uploaded PDF
+                    st.header("Uploaded PDF")
+                    display_pdf(pdf_path)
+                except Exception as e:
+                    st.error(f"Error processing PDF: {str(e)}")
+                    # Clean up the temporary file
+                    if os.path.exists(pdf_path):
+                        os.unlink(pdf_path)
 
-                    # Save the uploaded PDF temporarily for display purposes
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(content)
-                        pdf_path = tmp.name
+        elif input_method == "Image Upload":
+            uploaded_image = st.file_uploader("Choose Image file", type=["png", "jpg", "jpeg"])
+            if uploaded_image and st.button("Process Image"):
+                try:
+                    # Display the uploaded image
+                    image = Image.open(uploaded_image)
+                    st.image(image, caption="Uploaded Image", use_column_width=True)
 
-                    try:
-                        # Prepare document source for OCR processing
-                        document_source = {
-                            "type": "document_url",
-                            "document_url": upload_pdf(mistral_client, content, uploaded_file.name)
-                        }
+                    # Convert image to base64
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_str = base64.b64encode(buffered.getvalue()).decode()
 
-                        # Display the uploaded PDF
-                        st.header("Uploaded PDF")
-                        display_pdf(pdf_path)
-                    except Exception as e:
-                        st.error(f"Error processing PDF: {str(e)}")
-                        # Clean up the temporary file
-                        if os.path.exists(pdf_path):
-                            os.unlink(pdf_path)
+                    # Prepare document source for OCR processing
+                    document_source = {
+                        "type": "image_url",
+                        "image_url": f"data:image/png;base64,{img_str}"
+                    }
+                except Exception as e:
+                    st.error(f"Error processing image: {str(e)}")
 
-            elif input_method == "Image Upload":
-                uploaded_image = st.file_uploader("Choose Image file", type=["png", "jpg", "jpeg"])
-                if uploaded_image and st.button("Process Image"):
-                    try:
-                        # Display the uploaded image
-                        image = Image.open(uploaded_image)
-                        st.image(image, caption="Uploaded Image", use_column_width=True)
+        # Process document if source is provided
+        if document_source:
+            with st.spinner("Processing document..."):
+                try:
+                    ocr_response = process_ocr(mistral_client, document_source)
 
-                        # Convert image to base64
-                        buffered = io.BytesIO()
-                        image.save(buffered, format="PNG")
-                        img_str = base64.b64encode(buffered.getvalue()).decode()
+                    if ocr_response and ocr_response.pages:
+                        # Extract all text without page markers for clean content
+                        raw_content = []
 
-                        # Prepare document source for OCR processing
-                        document_source = {
-                            "type": "image_url",
-                            "image_url": f"data:image/png;base64,{img_str}"
-                        }
-                    except Exception as e:
-                        st.error(f"Error processing image: {str(e)}")
+                        for page in ocr_response.pages:
+                            page_content = page.markdown.strip()
+                            if page_content:  # Only add non-empty pages
+                                raw_content.append(page_content)
 
-            # Process document if source is provided
-            if document_source:
-                with st.spinner("Processing document..."):
-                    try:
-                        ocr_response = process_ocr(mistral_client, document_source)
+                        # Join all content into one clean string for the model
+                        final_content = "\n\n".join(raw_content)
 
-                        if ocr_response and ocr_response.pages:
-                            # Extract all text without page markers for clean content
-                            raw_content = []
+                        # Also create a display version with page numbers for the UI
+                        display_content = []
+                        for i, page in enumerate(ocr_response.pages):
+                            page_content = page.markdown.strip()
+                            if page_content:
+                                display_content.append(f"Page {i + 1}:\n{page_content}")
 
-                            for page in ocr_response.pages:
-                                page_content = page.markdown.strip()
-                                if page_content:  # Only add non-empty pages
-                                    raw_content.append(page_content)
+                        display_formatted = "\n\n----------\n\n".join(display_content)
 
-                            # Join all content into one clean string for the model
-                            final_content = "\n\n".join(raw_content)
+                        # Store both versions
+                        st.session_state.document_content = final_content  # Clean version for the model
+                        st.session_state.display_content = display_formatted  # Formatted version for display
+                        st.session_state.document_loaded = True
 
-                            # Also create a display version with page numbers for the UI
-                            display_content = []
-                            for i, page in enumerate(ocr_response.pages):
-                                page_content = page.markdown.strip()
-                                if page_content:
-                                    display_content.append(f"Page {i + 1}:\n{page_content}")
+                        # Show success information about extracted content
+                        st.success(
+                            f"Document processed successfully! Extracted {len(final_content)} characters from {len(raw_content)} pages.")
+                    else:
+                        st.warning("No content extracted from document.")
 
-                            display_formatted = "\n\n----------\n\n".join(display_content)
-
-                            # Store both versions
-                            st.session_state.document_content = final_content  # Clean version for the model
-                            st.session_state.display_content = display_formatted  # Formatted version for display
-                            st.session_state.document_loaded = True
-
-                            # Show success information about extracted content
-                            st.success(
-                                f"Document processed successfully! Extracted {len(final_content)} characters from {len(raw_content)} pages.")
-                        else:
-                            st.warning("No content extracted from document.")
-
-                    except Exception as e:
-                        st.error(f"Processing error: {str(e)}")
+                except Exception as e:
+                    st.error(f"Processing error: {str(e)}")
 
     # Main area: Display chat interface
     st.title("Document OCR & Chat")
