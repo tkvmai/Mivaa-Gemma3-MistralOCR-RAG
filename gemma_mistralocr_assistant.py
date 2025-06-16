@@ -422,7 +422,7 @@ def main():
                 st.session_state.show_upload = False
                 st.session_state.docs_dirty = True
                 st.rerun()
-        # Multiselect for document selection
+        # Multiselect for document selection inside a form
         doc_options = []
         doc_id_to_label = {}
         for doc in docs:
@@ -432,13 +432,16 @@ def main():
             doc_id_to_label[doc.id] = label
         label_to_doc_id = {v: k for k, v in doc_id_to_label.items()}
         valid_selected_doc_ids = [doc_id for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label]
-        selected_labels = st.multiselect(
-            "Select sources:",
-            options=doc_options,
-            default=[doc_id_to_label[doc_id] for doc_id in valid_selected_doc_ids],
-            key="doc_multiselect"
-        )
-        st.session_state.selected_doc_ids = [label_to_doc_id[label] for label in selected_labels]
+        with st.form("doc_select_form"):
+            selected_labels = st.multiselect(
+                "Select sources:",
+                options=doc_options,
+                default=[doc_id_to_label[doc_id] for doc_id in valid_selected_doc_ids],
+                key="doc_multiselect"
+            )
+            confirm = st.form_submit_button("Confirm Selection")
+        if confirm:
+            st.session_state.selected_doc_ids = [label_to_doc_id[label] for label in selected_labels]
         # 3-dot menu for rename/delete
         for doc in docs:
             if st.session_state.rename_doc_id == doc.id:
