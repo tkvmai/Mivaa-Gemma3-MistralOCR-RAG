@@ -431,10 +431,11 @@ def main():
             doc_options.append(label)
             doc_id_to_label[doc.id] = label
         label_to_doc_id = {v: k for k, v in doc_id_to_label.items()}
+        valid_selected_doc_ids = [doc_id for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label]
         selected_labels = st.multiselect(
             "Select sources:",
             options=doc_options,
-            default=[doc_id_to_label[doc_id] for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label],
+            default=[doc_id_to_label[doc_id] for doc_id in valid_selected_doc_ids],
             key="doc_multiselect"
         )
         st.session_state.selected_doc_ids = [label_to_doc_id[label] for label in selected_labels]
