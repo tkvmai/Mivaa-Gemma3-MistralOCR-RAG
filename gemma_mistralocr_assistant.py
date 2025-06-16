@@ -282,154 +282,203 @@ def main():
         if not google_api_key:
             st.warning("⚠️ Google API key required for chat functionality")
 
-    # Initialize session state
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+    # Main area: Two-pane layout
+    st.title("Document OCR & Chat")
+    st.write("")
 
-    if "document_content" not in st.session_state:
-        st.session_state.document_content = ""
-
-    if "document_loaded" not in st.session_state:
-        st.session_state.document_loaded = False
-
-    # Document upload section
-    st.subheader("Document Upload")
-
+    # Fetch all documents from the database
     session = SessionLocal()
-
-    # Only show document upload if Mistral client is initialized
-    if mistral_client:
-        input_method = st.radio("Select Input Type:", ["PDF Upload", "Image Upload", "URL"])
-
-        document_sources = []
-        uploaded_files = []
-        uploaded_images = []
-        urls = []
-
-        if input_method == "URL":
-            url = st.text_input("Document URL:")
-            if url and st.button("Load Document from URL"):
-                document_sources.append({
-                    "type": "document_url",
-                    "document_url": url
-                })
-                urls.append(url)
-
-        elif input_method == "PDF Upload":
-            uploaded_files = st.file_uploader("Choose PDF files", type=["pdf"], accept_multiple_files=True)
-            if uploaded_files and st.button("Process PDFs"):
-                for uploaded_file in uploaded_files:
-                    content = uploaded_file.read()
-                    try:
-                        doc_url = upload_pdf(mistral_client, content, uploaded_file.name)
-                        document_sources.append({
-                            "type": "document_url",
-                            "document_url": doc_url,
-                            "filename": uploaded_file.name,
-                            "content": content
-                        })
-                    except Exception as e:
-                        st.error(f"Error uploading {uploaded_file.name}: {str(e)}")
-
-        elif input_method == "Image Upload":
-            uploaded_images = st.file_uploader("Choose Image files", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
-            if uploaded_images and st.button("Process Images"):
-                for uploaded_image in uploaded_images:
-                    try:
-                        image = Image.open(uploaded_image)
-                        st.image(image, caption=f"Uploaded Image: {uploaded_image.name}", use_column_width=True)
-                        buffered = io.BytesIO()
-                        image.save(buffered, format="PNG")
-                        img_str = base64.b64encode(buffered.getvalue()).decode()
-                        document_sources.append({
-                            "type": "image_url",
-                            "image_url": f"data:image/png;base64,{img_str}",
-                            "filename": uploaded_image.name,
-                            "content": buffered.getvalue()
-                        })
-                    except Exception as e:
-                        st.error(f"Error processing image {uploaded_image.name}: {str(e)}")
-
-        # Process all document sources
-        if document_sources:
-            for doc in document_sources:
-                with st.spinner(f"Processing {doc.get('filename', doc.get('document_url', 'URL'))}..."):
-                    try:
-                        ocr_response = process_ocr(mistral_client, doc)
-                        if ocr_response and ocr_response.pages:
-                            raw_content = []
-                            for page in ocr_response.pages:
-                                page_content = page.markdown.strip()
-                                if page_content:
-                                    raw_content.append(page_content)
-                            final_content = "\n\n".join(raw_content)
-                            # Save to database
-                            db_doc = Document(
-                                filename=doc.get('filename', None),
-                                filetype=doc['type'],
-                                content=doc.get('content', None),
-                                url=doc.get('document_url', None),
-                                ocr_text=final_content
-                            )
-                            session.add(db_doc)
-                            session.commit()
-                            st.success(f"Processed and saved: {doc.get('filename', doc.get('document_url', 'URL'))}")
-                        else:
-                            st.warning(f"No content extracted from {doc.get('filename', doc.get('document_url', 'URL'))}.")
-                    except Exception as e:
-                        st.error(f"Processing error for {doc.get('filename', doc.get('document_url', 'URL'))}: {str(e)}")
+    docs = session.query(Document).order_by(Document.created_at.desc()).all()
     session.close()
 
-    # Main area: Display chat interface
-    st.title("Document OCR & Chat")
+    # UI state for selected documents and menu
+    if "selected_doc_ids" not in st.session_state:
+        st.session_state.selected_doc_ids = [doc.id for doc in docs] if docs else []
+    if "rename_doc_id" not in st.session_state:
+        st.session_state.rename_doc_id = None
+    if "rename_value" not in st.session_state:
+        st.session_state.rename_value = ""
+    if "show_upload" not in st.session_state:
+        st.session_state.show_upload = False
 
-    # Document preview area
-    if "document_loaded" in st.session_state and st.session_state.document_loaded:
-        with st.expander("Document Content", expanded=False):
-            # Show the display version with page numbers
-            if "display_content" in st.session_state:
-                st.markdown(st.session_state.display_content)
-            else:
-                st.markdown(st.session_state.document_content)
+    left_col, right_col = st.columns([1, 2], gap="large")
 
-        # Chat interface
-        st.subheader("Chat with your document")
+    with left_col:
+        st.subheader("Sources")
+        # Add and Discover buttons
+        col_add, col_discover = st.columns([1, 1])
+        with col_add:
+            if st.button("+ Add", key="add_btn"):
+                st.session_state.show_upload = not st.session_state.show_upload
+        with col_discover:
+            st.button("Discover", key="discover_btn", disabled=True)
+        # Upload section
+        if st.session_state.show_upload:
+            st.info("Upload PDFs or Images, or add a URL.")
+            upload_tab = st.radio("Upload Type", ["PDF", "Image", "URL"], horizontal=True)
+            document_sources = []
+            if upload_tab == "PDF":
+                uploaded_files = st.file_uploader("Choose PDF files", type=["pdf"], accept_multiple_files=True, key="multi_pdf")
+                if uploaded_files and st.button("Process PDFs", key="process_pdfs_btn"):
+                    for uploaded_file in uploaded_files:
+                        content = uploaded_file.read()
+                        try:
+                            doc_url = upload_pdf(mistral_client, content, uploaded_file.name)
+                            document_sources.append({
+                                "type": "document_url",
+                                "document_url": doc_url,
+                                "filename": uploaded_file.name,
+                                "content": content
+                            })
+                        except Exception as e:
+                            st.error(f"Error uploading {uploaded_file.name}: {str(e)}")
+            elif upload_tab == "Image":
+                uploaded_images = st.file_uploader("Choose Image files", type=["png", "jpg", "jpeg"], accept_multiple_files=True, key="multi_img")
+                if uploaded_images and st.button("Process Images", key="process_imgs_btn"):
+                    for uploaded_image in uploaded_images:
+                        try:
+                            image = Image.open(uploaded_image)
+                            st.image(image, caption=f"Uploaded Image: {uploaded_image.name}", use_column_width=True)
+                            buffered = io.BytesIO()
+                            image.save(buffered, format="PNG")
+                            img_str = base64.b64encode(buffered.getvalue()).decode()
+                            document_sources.append({
+                                "type": "image_url",
+                                "image_url": f"data:image/png;base64,{img_str}",
+                                "filename": uploaded_image.name,
+                                "content": buffered.getvalue()
+                            })
+                        except Exception as e:
+                            st.error(f"Error processing image {uploaded_image.name}: {str(e)}")
+            elif upload_tab == "URL":
+                url = st.text_input("Document URL:", key="url_input")
+                if url and st.button("Load Document from URL", key="process_url_btn"):
+                    document_sources.append({
+                        "type": "document_url",
+                        "document_url": url
+                    })
+            # Process all document sources
+            if document_sources:
+                session = SessionLocal()
+                for doc in document_sources:
+                    with st.spinner(f"Processing {doc.get('filename', doc.get('document_url', 'URL'))}..."):
+                        try:
+                            ocr_response = process_ocr(mistral_client, doc)
+                            if ocr_response and ocr_response.pages:
+                                raw_content = []
+                                for page in ocr_response.pages:
+                                    page_content = page.markdown.strip()
+                                    if page_content:
+                                        raw_content.append(page_content)
+                                final_content = "\n\n".join(raw_content)
+                                db_doc = Document(
+                                    filename=doc.get('filename', None),
+                                    filetype=doc['type'],
+                                    content=doc.get('content', None),
+                                    url=doc.get('document_url', None),
+                                    ocr_text=final_content
+                                )
+                                session.add(db_doc)
+                                session.commit()
+                                st.success(f"Processed and saved: {doc.get('filename', doc.get('document_url', 'URL'))}")
+                            else:
+                                st.warning(f"No content extracted from {doc.get('filename', doc.get('document_url', 'URL'))}.")
+                        except Exception as e:
+                            st.error(f"Processing error for {doc.get('filename', doc.get('document_url', 'URL'))}: {str(e)}")
+                session.close()
+                st.session_state.show_upload = False
+                st.experimental_rerun()
+        # Select all sources
+        all_selected = set(st.session_state.selected_doc_ids) == set([doc.id for doc in docs])
+        if st.checkbox("Select all sources", value=all_selected, key="select_all_sources"):
+            st.session_state.selected_doc_ids = [doc.id for doc in docs]
+        else:
+            if not all_selected:
+                st.session_state.selected_doc_ids = []
+        # List documents with checkboxes, icons, and 3-dot menu
+        for doc in docs:
+            icon = "📄" if (doc.filename and doc.filename.lower().endswith(".pdf")) else ("🖼️" if doc.filetype == "image_url" else "🌐")
+            checked = doc.id in st.session_state.selected_doc_ids
+            cols = st.columns([0.08, 0.08, 0.7, 0.14])
+            with cols[0]:
+                st.checkbox("", value=checked, key=f"doc_select_{doc.id}", on_change=lambda d=doc: st.session_state.selected_doc_ids.append(d.id) if d.id not in st.session_state.selected_doc_ids else st.session_state.selected_doc_ids.remove(d.id))
+            with cols[1]:
+                st.markdown(icon)
+            with cols[2]:
+                if st.button(doc.filename or doc.url or f"Document {doc.id}", key=f"select_{doc.id}"):
+                    if doc.id not in st.session_state.selected_doc_ids:
+                        st.session_state.selected_doc_ids.append(doc.id)
+            with cols[3]:
+                menu_key = f"menu_{doc.id}"
+                if st.button("⋮", key=menu_key):
+                    st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
+                    st.session_state.rename_value = doc.filename or ""
+            if st.session_state.rename_doc_id == doc.id:
+                new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
+                col_rename, col_delete = st.columns(2)
+                with col_rename:
+                    if st.button("Rename", key=f"rename_btn_{doc.id}"):
+                        session = SessionLocal()
+                        doc_to_rename = session.query(Document).filter_by(id=doc.id).first()
+                        doc_to_rename.filename = new_name
+                        session.commit()
+                        session.close()
+                        st.session_state.rename_doc_id = None
+                        st.experimental_rerun()
+                with col_delete:
+                    if st.button("Delete", key=f"delete_btn_{doc.id}"):
+                        session = SessionLocal()
+                        session.query(Document).filter_by(id=doc.id).delete()
+                        session.commit()
+                        session.close()
+                        if doc.id in st.session_state.selected_doc_ids:
+                            st.session_state.selected_doc_ids.remove(doc.id)
+                        st.session_state.rename_doc_id = None
+                        st.experimental_rerun()
 
-        # Display chat messages
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Input for user query
-        if prompt := st.chat_input("Ask a question about your document..."):
-            # Check if Google API key is available
-            if not google_api_key:
-                st.error("Google API key is required for generating responses. Please add it in the sidebar settings.")
-            else:
-                # Add user message to chat history
-                st.session_state.messages.append({"role": "user", "content": prompt})
-
-                # Display user message
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
-                # Show thinking spinner
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        # Get document content from session state
-                        document_content = st.session_state.document_content
-
-                        # Generate response directly
-                        response = generate_response(document_content, prompt)
-
-                        # Display response
-                        st.markdown(response)
-
-                # Add assistant message to chat history
-                st.session_state.messages.append({"role": "assistant", "content": response})
-    else:
-        # Show a welcome message if no document is loaded
-        st.info("👈 Please upload a document using the sidebar to start chatting.")
+    with right_col:
+        selected_docs = [d for d in docs if d.id in st.session_state.selected_doc_ids]
+        if not selected_docs:
+            st.info("Select one or more sources from the left pane to start chatting.")
+        else:
+            st.subheader(f"Chat with {len(selected_docs)} source(s)")
+            # Summary of selected sources
+            st.markdown("**Selected sources:** " + ", ".join([d.filename or d.url or f"Document {d.id}" for d in selected_docs]))
+            # Placeholder action buttons
+            col_note, col_add_note, col_audio, col_mindmap = st.columns([1,1,1,1])
+            with col_note:
+                st.button("💾 Save to note", key="save_note_btn", disabled=True)
+            with col_add_note:
+                st.button("📝 Add note", key="add_note_btn", disabled=True)
+            with col_audio:
+                st.button("🔊 Audio Overview", key="audio_btn", disabled=True)
+            with col_mindmap:
+                st.button("🗺️ Mind Map", key="mindmap_btn", disabled=True)
+            with st.expander("Document Content", expanded=False):
+                for d in selected_docs:
+                    st.markdown(f"**{d.filename or d.url or f'Document {d.id}'}**\n\n" + d.ocr_text)
+            # Chat interface
+            if "messages" not in st.session_state or st.session_state.get("last_doc_ids") != set(st.session_state.selected_doc_ids):
+                st.session_state.messages = []
+                st.session_state.last_doc_ids = set(st.session_state.selected_doc_ids)
+            st.subheader("Chat")
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+            if prompt := st.chat_input("Ask a question about your selected sources..."):
+                if not google_api_key:
+                    st.error("Google API key is required for generating responses.")
+                else:
+                    st.session_state.messages.append({"role": "user", "content": prompt})
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
+                    with st.chat_message("assistant"):
+                        with st.spinner("Thinking..."):
+                            # Combine all selected docs' OCR text
+                            context = "\n\n".join([d.ocr_text for d in selected_docs])
+                            response = generate_response(context, prompt)
+                            st.markdown(response)
+                    st.session_state.messages.append({"role": "assistant", "content": response})
 
 
 if __name__ == "__main__":
