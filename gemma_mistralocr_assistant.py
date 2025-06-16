@@ -252,11 +252,9 @@ def main():
 
     st.set_page_config(page_title="Document OCR & Chat", layout="wide")
 
-    # API connection status notifications (show briefly, only once per session)
+    # API connection status notifications (show with Dismiss button)
     if "api_notification_dismissed" not in st.session_state:
         st.session_state.api_notification_dismissed = False
-    if "api_notification_start_time" not in st.session_state:
-        st.session_state.api_notification_start_time = time.time()
 
     mistral_client = None
     mistral_status = False
@@ -287,7 +285,6 @@ def main():
     if not google_status:
         notification_msgs.append(("warning", "⚠️ Google API key required for chat functionality"))
 
-    # Show notifications for 3 seconds, then hide for the rest of the session
     if not st.session_state.api_notification_dismissed:
         for level, msg in notification_msgs:
             if level == "success":
@@ -296,7 +293,7 @@ def main():
                 st.error(msg)
             elif level == "warning":
                 st.warning(msg)
-        if time.time() - st.session_state.api_notification_start_time > 3:
+        if st.button("Dismiss", key="dismiss_api_notification"):
             st.session_state.api_notification_dismissed = True
             st.experimental_rerun()
 
