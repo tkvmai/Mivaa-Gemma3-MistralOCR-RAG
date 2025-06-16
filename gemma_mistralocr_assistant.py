@@ -251,36 +251,34 @@ def main():
 
     st.set_page_config(page_title="Document OCR & Chat", layout="wide")
 
-    # Sidebar: Show settings and API key status only
-    with st.sidebar:
-        st.header("Settings")
-
-        # Initialize Mistral client with the API key
-        mistral_client = None
-        if api_key:
-            mistral_client = initialize_mistral_client(api_key)
-            if mistral_client:
-                st.success("✅ Mistral API connected successfully")
+    # API connection status notifications
+    mistral_client = None
+    mistral_status = False
+    google_status = False
+    if api_key:
+        mistral_client = initialize_mistral_client(api_key)
+        if mistral_client:
+            mistral_status = True
+            st.success("✅ Mistral API connected successfully")
         else:
-            st.error("❌ Mistral API key not found in environment variables.")
+            st.error("❌ Mistral API key not found or invalid.")
+    else:
+        st.error("❌ Mistral API key not found in environment variables.")
 
-        # Google API key validation
-        if google_api_key:
-            is_valid, message = test_google_api(google_api_key)
-            if is_valid:
-                st.success(f"✅ Google API {message}")
-            else:
-                st.error(f"❌ Google API: {message}")
-                google_api_key = None
+    if google_api_key:
+        is_valid, message = test_google_api(google_api_key)
+        if is_valid:
+            google_status = True
+            st.success(f"✅ Google API {message}")
         else:
-            st.error("❌ Google API key not found in environment variables.")
+            st.error(f"❌ Google API: {message}")
+    else:
+        st.error("❌ Google API key not found in environment variables.")
 
-        # Display warnings for missing API keys
-        if not api_key or mistral_client is None:
-            st.warning("⚠️ Valid Mistral API key required for document processing")
-
-        if not google_api_key:
-            st.warning("⚠️ Google API key required for chat functionality")
+    if not mistral_status:
+        st.warning("⚠️ Valid Mistral API key required for document processing")
+    if not google_status:
+        st.warning("⚠️ Google API key required for chat functionality")
 
     # Main area: Two-pane layout
     st.title("Document OCR & Chat")
