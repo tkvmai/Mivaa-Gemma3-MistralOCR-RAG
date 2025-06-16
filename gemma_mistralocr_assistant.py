@@ -493,36 +493,35 @@ def main():
             st.session_state.selected_doc_ids = st.session_state.temp_selected_doc_ids.copy()
         # 3-dot menu for rename/delete
         for doc in docs:
+            menu_key = f"menu_{doc.id}"
+            if st.button("⋮", key=menu_key):
+                st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
+                st.session_state.rename_value = doc.filename or ""
             if st.session_state.rename_doc_id == doc.id:
-                new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
-                col_rename, col_delete = st.columns(2)
-                with col_rename:
-                    if st.button("Rename", key=f"rename_btn_{doc.id}"):
-                        session = SessionLocal()
-                        doc_to_rename = session.query(Document).filter_by(id=doc.id).first()
-                        doc_to_rename.filename = new_name
-                        session.commit()
-                        session.close()
-                        st.session_state.rename_doc_id = None
-                        st.session_state.docs_dirty = True
-                        st.rerun()
-                with col_delete:
-                    if st.button("Delete", key=f"delete_btn_{doc.id}"):
-                        session = SessionLocal()
-                        session.query(Document).filter_by(id=doc.id).delete()
-                        session.commit()
-                        session.close()
-                        if doc.id in st.session_state.selected_doc_ids:
-                            st.session_state.selected_doc_ids.remove(doc.id)
-                        st.session_state.rename_doc_id = None
-                        st.session_state.docs_dirty = True
-                        st.rerun()
-            else:
-                # Show 3-dot menu button next to each doc
-                menu_key = f"menu_{doc.id}"
-                if st.button("⋮", key=menu_key):
-                    st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
-                    st.session_state.rename_value = doc.filename or ""
+                with st.container():
+                    new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
+                    col_rename, col_delete = st.columns(2)
+                    with col_rename:
+                        if st.button("Rename", key=f"rename_btn_{doc.id}"):
+                            session = SessionLocal()
+                            doc_to_rename = session.query(Document).filter_by(id=doc.id).first()
+                            doc_to_rename.filename = new_name
+                            session.commit()
+                            session.close()
+                            st.session_state.rename_doc_id = None
+                            st.session_state.docs_dirty = True
+                            st.rerun()
+                    with col_delete:
+                        if st.button("Delete", key=f"delete_btn_{doc.id}"):
+                            session = SessionLocal()
+                            session.query(Document).filter_by(id=doc.id).delete()
+                            session.commit()
+                            session.close()
+                            if doc.id in st.session_state.selected_doc_ids:
+                                st.session_state.selected_doc_ids.remove(doc.id)
+                            st.session_state.rename_doc_id = None
+                            st.session_state.docs_dirty = True
+                            st.rerun()
 
     with right_col:
         selected_docs = [d for d in docs if d.id in st.session_state.selected_doc_ids]
