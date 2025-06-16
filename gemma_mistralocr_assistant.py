@@ -295,7 +295,7 @@ def main():
                 st.warning(msg)
         if st.button("Dismiss", key="dismiss_api_notification"):
             st.session_state.api_notification_dismissed = True
-            st.experimental_rerun()
+            st.rerun()
 
     # Main area: Two-pane layout
     st.title("Document OCR & Chat")
@@ -402,7 +402,7 @@ def main():
                             st.error(f"Processing error for {doc.get('filename', doc.get('document_url', 'URL'))}: {str(e)}")
                 session.close()
                 st.session_state.show_upload = False
-                st.experimental_rerun()
+                st.rerun()
         # Select all sources
         all_selected = set(st.session_state.selected_doc_ids) == set([doc.id for doc in docs])
         if st.checkbox("Select all sources", value=all_selected, key="select_all_sources"):
@@ -439,7 +439,7 @@ def main():
                         session.commit()
                         session.close()
                         st.session_state.rename_doc_id = None
-                        st.experimental_rerun()
+                        st.rerun()
                 with col_delete:
                     if st.button("Delete", key=f"delete_btn_{doc.id}"):
                         session = SessionLocal()
@@ -449,7 +449,7 @@ def main():
                         if doc.id in st.session_state.selected_doc_ids:
                             st.session_state.selected_doc_ids.remove(doc.id)
                         st.session_state.rename_doc_id = None
-                        st.experimental_rerun()
+                        st.rerun()
 
     with right_col:
         selected_docs = [d for d in docs if d.id in st.session_state.selected_doc_ids]
