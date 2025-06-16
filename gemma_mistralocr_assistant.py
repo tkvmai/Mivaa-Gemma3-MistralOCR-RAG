@@ -9,6 +9,11 @@ from mistralai import DocumentURLChunk, ImageURLChunk
 from mistralai.models import OCRResponse
 from dotenv import find_dotenv, load_dotenv
 import google.generativeai as genai
+import sqlite3
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import datetime
 
 # Load environment variables from .env if present
 load_dotenv(find_dotenv())
@@ -17,6 +22,23 @@ load_dotenv(find_dotenv())
 api_key = os.environ.get("MISTRAL_API_KEY")
 google_api_key = os.environ.get("GOOGLE_API_KEY")
 
+# Database setup
+DATABASE_URL = "sqlite:///ocr_documents.db"
+engine = create_engine(DATABASE_URL)
+Base = declarative_base()
+
+class Document(Base):
+    __tablename__ = 'documents'
+    id = Column(Integer, primary_key=True)
+    filename = Column(String)
+    filetype = Column(String)
+    content = Column(LargeBinary)  # For files
+    url = Column(String)           # For URLs
+    ocr_text = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def initialize_mistral_client(api_key):
     try:
@@ -273,107 +295,90 @@ def main():
     # Document upload section
     st.subheader("Document Upload")
 
+    session = SessionLocal()
+
     # Only show document upload if Mistral client is initialized
     if mistral_client:
         input_method = st.radio("Select Input Type:", ["PDF Upload", "Image Upload", "URL"])
 
-        document_source = None
+        document_sources = []
+        uploaded_files = []
+        uploaded_images = []
+        urls = []
 
         if input_method == "URL":
             url = st.text_input("Document URL:")
             if url and st.button("Load Document from URL"):
-                document_source = {
+                document_sources.append({
                     "type": "document_url",
                     "document_url": url
-                }
+                })
+                urls.append(url)
 
         elif input_method == "PDF Upload":
-            uploaded_file = st.file_uploader("Choose PDF file", type=["pdf"])
-            if uploaded_file and st.button("Process PDF"):
-                content = uploaded_file.read()
-
-                # Save the uploaded PDF temporarily for display purposes
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(content)
-                    pdf_path = tmp.name
-
-                try:
-                    # Prepare document source for OCR processing
-                    document_source = {
-                        "type": "document_url",
-                        "document_url": upload_pdf(mistral_client, content, uploaded_file.name)
-                    }
-
-                    # Display the uploaded PDF
-                    st.header("Uploaded PDF")
-                    display_pdf(pdf_path)
-                except Exception as e:
-                    st.error(f"Error processing PDF: {str(e)}")
-                    # Clean up the temporary file
-                    if os.path.exists(pdf_path):
-                        os.unlink(pdf_path)
+            uploaded_files = st.file_uploader("Choose PDF files", type=["pdf"], accept_multiple_files=True)
+            if uploaded_files and st.button("Process PDFs"):
+                for uploaded_file in uploaded_files:
+                    content = uploaded_file.read()
+                    try:
+                        doc_url = upload_pdf(mistral_client, content, uploaded_file.name)
+                        document_sources.append({
+                            "type": "document_url",
+                            "document_url": doc_url,
+                            "filename": uploaded_file.name,
+                            "content": content
+                        })
+                    except Exception as e:
+                        st.error(f"Error uploading {uploaded_file.name}: {str(e)}")
 
         elif input_method == "Image Upload":
-            uploaded_image = st.file_uploader("Choose Image file", type=["png", "jpg", "jpeg"])
-            if uploaded_image and st.button("Process Image"):
-                try:
-                    # Display the uploaded image
-                    image = Image.open(uploaded_image)
-                    st.image(image, caption="Uploaded Image", use_column_width=True)
+            uploaded_images = st.file_uploader("Choose Image files", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+            if uploaded_images and st.button("Process Images"):
+                for uploaded_image in uploaded_images:
+                    try:
+                        image = Image.open(uploaded_image)
+                        st.image(image, caption=f"Uploaded Image: {uploaded_image.name}", use_column_width=True)
+                        buffered = io.BytesIO()
+                        image.save(buffered, format="PNG")
+                        img_str = base64.b64encode(buffered.getvalue()).decode()
+                        document_sources.append({
+                            "type": "image_url",
+                            "image_url": f"data:image/png;base64,{img_str}",
+                            "filename": uploaded_image.name,
+                            "content": buffered.getvalue()
+                        })
+                    except Exception as e:
+                        st.error(f"Error processing image {uploaded_image.name}: {str(e)}")
 
-                    # Convert image to base64
-                    buffered = io.BytesIO()
-                    image.save(buffered, format="PNG")
-                    img_str = base64.b64encode(buffered.getvalue()).decode()
-
-                    # Prepare document source for OCR processing
-                    document_source = {
-                        "type": "image_url",
-                        "image_url": f"data:image/png;base64,{img_str}"
-                    }
-                except Exception as e:
-                    st.error(f"Error processing image: {str(e)}")
-
-        # Process document if source is provided
-        if document_source:
-            with st.spinner("Processing document..."):
-                try:
-                    ocr_response = process_ocr(mistral_client, document_source)
-
-                    if ocr_response and ocr_response.pages:
-                        # Extract all text without page markers for clean content
-                        raw_content = []
-
-                        for page in ocr_response.pages:
-                            page_content = page.markdown.strip()
-                            if page_content:  # Only add non-empty pages
-                                raw_content.append(page_content)
-
-                        # Join all content into one clean string for the model
-                        final_content = "\n\n".join(raw_content)
-
-                        # Also create a display version with page numbers for the UI
-                        display_content = []
-                        for i, page in enumerate(ocr_response.pages):
-                            page_content = page.markdown.strip()
-                            if page_content:
-                                display_content.append(f"Page {i + 1}:\n{page_content}")
-
-                        display_formatted = "\n\n----------\n\n".join(display_content)
-
-                        # Store both versions
-                        st.session_state.document_content = final_content  # Clean version for the model
-                        st.session_state.display_content = display_formatted  # Formatted version for display
-                        st.session_state.document_loaded = True
-
-                        # Show success information about extracted content
-                        st.success(
-                            f"Document processed successfully! Extracted {len(final_content)} characters from {len(raw_content)} pages.")
-                    else:
-                        st.warning("No content extracted from document.")
-
-                except Exception as e:
-                    st.error(f"Processing error: {str(e)}")
+        # Process all document sources
+        if document_sources:
+            for doc in document_sources:
+                with st.spinner(f"Processing {doc.get('filename', doc.get('document_url', 'URL'))}..."):
+                    try:
+                        ocr_response = process_ocr(mistral_client, doc)
+                        if ocr_response and ocr_response.pages:
+                            raw_content = []
+                            for page in ocr_response.pages:
+                                page_content = page.markdown.strip()
+                                if page_content:
+                                    raw_content.append(page_content)
+                            final_content = "\n\n".join(raw_content)
+                            # Save to database
+                            db_doc = Document(
+                                filename=doc.get('filename', None),
+                                filetype=doc['type'],
+                                content=doc.get('content', None),
+                                url=doc.get('document_url', None),
+                                ocr_text=final_content
+                            )
+                            session.add(db_doc)
+                            session.commit()
+                            st.success(f"Processed and saved: {doc.get('filename', doc.get('document_url', 'URL'))}")
+                        else:
+                            st.warning(f"No content extracted from {doc.get('filename', doc.get('document_url', 'URL'))}.")
+                    except Exception as e:
+                        st.error(f"Processing error for {doc.get('filename', doc.get('document_url', 'URL'))}: {str(e)}")
+    session.close()
 
     # Main area: Display chat interface
     st.title("Document OCR & Chat")

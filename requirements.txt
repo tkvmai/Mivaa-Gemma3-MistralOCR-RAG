@@ -3,3 +3,5 @@ pillow
 python-dotenv
 mistralai
 google-generativeai
+# sqlite3 (built-in)
+sqlalchemy
