@@ -5,3 +5,5 @@ mistralai
 google-generativeai
 # sqlite3 (built-in)
 sqlalchemy
+openai
+scikit-learn

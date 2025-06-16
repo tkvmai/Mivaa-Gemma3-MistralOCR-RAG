@@ -10,11 +10,14 @@ from mistralai.models import OCRResponse
 from dotenv import find_dotenv, load_dotenv
 import google.generativeai as genai
 import sqlite3
-from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, LargeBinary, Text, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 import datetime
 import time
+import openai
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Load environment variables from .env if present
 load_dotenv(find_dotenv())
@@ -37,6 +40,14 @@ class Document(Base):
     url = Column(String)           # For URLs
     ocr_text = Column(Text)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Chunk(Base):
+    __tablename__ = 'chunks'
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer, ForeignKey('documents.id'))
+    chunk_text = Column(Text)
+    embedding = Column(LargeBinary)  # Store as bytes (np.array.tobytes())
+    document = relationship('Document', backref='chunks')
 
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -246,6 +257,31 @@ If the document doesn't specifically mention the exact information asked, please
         print(traceback.format_exc())
         return f"Error generating response: {str(e)}"
 
+# Helper: Chunk text into ~2000 character chunks
+CHUNK_SIZE = 2000
+
+def chunk_text(text, chunk_size=CHUNK_SIZE):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        # Try to break at a newline or space for better chunking
+        if end < len(text):
+            newline = text.rfind('\n', start, end)
+            space = text.rfind(' ', start, end)
+            split_at = max(newline, space)
+            if split_at > start:
+                end = split_at
+        chunks.append(text[start:end].strip())
+        start = end
+    return [c for c in chunks if c]
+
+# Helper: Get OpenAI embedding for a string
+OPENAI_EMBED_MODEL = "text-embedding-3-small"
+def get_openai_embedding(text, api_key=None):
+    openai.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+    resp = openai.embeddings.create(input=[text], model=OPENAI_EMBED_MODEL)
+    return np.array(resp.data[0].embedding, dtype=np.float32)
 
 def main():
     global api_key, google_api_key
@@ -414,6 +450,13 @@ def main():
                                 session.add(db_doc)
                                 session.commit()
                                 st.success(f"Processed and saved: {doc.get('filename', doc.get('document_url', 'URL'))}")
+                                # Chunk and embed
+                                chunks = chunk_text(final_content)
+                                for chunk in chunks:
+                                    emb = get_openai_embedding(chunk)
+                                    chunk_obj = Chunk(document_id=db_doc.id, chunk_text=chunk, embedding=emb.tobytes())
+                                    session.add(chunk_obj)
+                                session.commit()
                             else:
                                 st.warning(f"No content extracted from {doc.get('filename', doc.get('document_url', 'URL'))}.")
                         except Exception as e:
@@ -519,9 +562,25 @@ def main():
                         st.markdown(prompt)
                     with st.chat_message("assistant"):
                         with st.spinner("Thinking..."):
-                            # Combine all selected docs' OCR text
-                            context = "\n\n".join([d.ocr_text for d in selected_docs])
-                            response = generate_response(context, prompt)
+                            # --- RAG: Retrieve top 5 relevant chunks ---
+                            # 1. Embed the question
+                            q_emb = get_openai_embedding(prompt)
+                            # 2. Get all chunks for selected docs
+                            session = SessionLocal()
+                            all_chunks = session.query(Chunk).filter(Chunk.document_id.in_([d.id for d in selected_docs])).all()
+                            session.close()
+                            if not all_chunks:
+                                st.error("No chunks found for selected documents.")
+                                response = "No content available."
+                            else:
+                                chunk_texts = [c.chunk_text for c in all_chunks]
+                                chunk_embs = np.stack([np.frombuffer(c.embedding, dtype=np.float32) for c in all_chunks])
+                                # 3. Compute cosine similarity
+                                sims = cosine_similarity([q_emb], chunk_embs)[0]
+                                top_idx = np.argsort(sims)[-5:][::-1]  # top 5
+                                top_chunks = [chunk_texts[i] for i in top_idx]
+                                context = "\n\n".join(top_chunks)
+                                response = generate_response(context, prompt)
                             st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
 
