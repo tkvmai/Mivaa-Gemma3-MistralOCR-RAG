@@ -378,8 +378,6 @@ def main():
         with col_add:
             if st.button("+ Add", key="add_btn"):
                 st.session_state.show_upload = not st.session_state.show_upload
-        with col_discover:
-            st.button("Discover", key="discover_btn", disabled=True)
         if st.session_state.show_upload:
             st.info("Upload PDFs or Images, or add a URL.")
             upload_tab = st.radio("Upload Type", ["PDF", "Image", "URL"], horizontal=True)
@@ -555,16 +553,6 @@ def main():
         else:
             st.subheader(f"Chat with {len(selected_docs)} source(s)")
             st.markdown("**Selected sources:** " + ", ".join([d.filename or d.url or f"Document {d.id}" for d in selected_docs]))
-            # Placeholder action buttons
-            col_note, col_add_note, col_audio, col_mindmap = st.columns([1,1,1,1])
-            with col_note:
-                st.button("💾 Save to note", key="save_note_btn", disabled=True)
-            with col_add_note:
-                st.button("📝 Add note", key="add_note_btn", disabled=True)
-            with col_audio:
-                st.button("🔊 Audio Overview", key="audio_btn", disabled=True)
-            with col_mindmap:
-                st.button("🗺️ Mind Map", key="mindmap_btn", disabled=True)
             # Chat interface
             if "messages" not in st.session_state or st.session_state.get("last_doc_ids") != set(st.session_state.selected_doc_ids):
                 st.session_state.messages = []
