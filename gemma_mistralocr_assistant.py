@@ -374,14 +374,12 @@ def main():
 
     with left_col:
         st.subheader("Sources")
-        # Add and Discover buttons
         col_add, col_discover = st.columns([1, 1])
         with col_add:
             if st.button("+ Add", key="add_btn"):
                 st.session_state.show_upload = not st.session_state.show_upload
         with col_discover:
             st.button("Discover", key="discover_btn", disabled=True)
-        # Upload section
         if st.session_state.show_upload:
             st.info("Upload PDFs or Images, or add a URL.")
             upload_tab = st.radio("Upload Type", ["PDF", "Image", "URL"], horizontal=True)
@@ -488,7 +486,7 @@ def main():
         st.session_state.temp_selected_doc_ids = [label_to_doc_id[label] for label in temp_selected_labels]
         if confirm:
             st.session_state.selected_doc_ids = st.session_state.temp_selected_doc_ids.copy()
-        # --- Scrollable file list with glass icon ---
+        # --- Combined file list with glass and 3-dot icons ---
         st.markdown(
             """
             <style>
@@ -502,7 +500,7 @@ def main():
         )
         st.markdown('<div class="scrollable-file-list">', unsafe_allow_html=True)
         for doc in docs:
-            col1, col2, col3 = st.columns([1, 8, 1])
+            col1, col2, col3, col4 = st.columns([1, 8, 1, 1])
             with col1:
                 st.write("📄" if (doc.filename and doc.filename.lower().endswith(".pdf")) else ("🖼️" if doc.filetype == "image_url" else "🌐"))
             with col2:
@@ -510,49 +508,42 @@ def main():
             with col3:
                 if st.button("🔍", key=f"view_{doc.id}"):
                     st.session_state.view_doc_id = doc.id
-        st.markdown('</div>', unsafe_allow_html=True)
-        # 3-dot menu for rename/delete
-        for doc in docs:
-            menu_key = f"menu_{doc.id}"
-            st.markdown("---")
-            col1, col2 = st.columns([1, 20])
-            with col1:
-                if st.button("⋮", key=menu_key):
+            with col4:
+                if st.button("⋮", key=f"menu_{doc.id}"):
                     st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
                     st.session_state.rename_value = doc.filename or ""
-            with col2:
-                st.markdown(f"**{doc.filename or doc.url or f'Document {doc.id}'}**")
-            if st.session_state.rename_doc_id == doc.id:
-                with st.container():
-                    new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
-                    col_rename, col_delete = st.columns(2)
-                    with col_rename:
-                        if st.button("Rename", key=f"rename_btn_{doc.id}"):
-                            session = SessionLocal()
-                            doc_to_rename = session.query(Document).filter_by(id=doc.id).first()
-                            doc_to_rename.filename = new_name
-                            session.commit()
-                            session.close()
-                            st.session_state.rename_doc_id = None
-                            st.session_state.docs_dirty = True
-                            st.rerun()
-                    with col_delete:
-                        if st.button("Delete", key=f"delete_btn_{doc.id}"):
-                            session = SessionLocal()
-                            session.query(Document).filter_by(id=doc.id).delete()
-                            session.commit()
-                            session.close()
-                            if doc.id in st.session_state.selected_doc_ids:
-                                st.session_state.selected_doc_ids.remove(doc.id)
-                            st.session_state.rename_doc_id = None
-                            st.session_state.docs_dirty = True
-                            st.rerun()
+            # Inline rename/delete below the row if active
+            if st.session_state.get("rename_doc_id") == doc.id:
+                new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
+                col_rename, col_delete = st.columns(2)
+                with col_rename:
+                    if st.button("Rename", key=f"rename_btn_{doc.id}"):
+                        session = SessionLocal()
+                        doc_to_rename = session.query(Document).filter_by(id=doc.id).first()
+                        doc_to_rename.filename = new_name
+                        session.commit()
+                        session.close()
+                        st.session_state.rename_doc_id = None
+                        st.session_state.docs_dirty = True
+                        st.rerun()
+                with col_delete:
+                    if st.button("Delete", key=f"delete_btn_{doc.id}"):
+                        session = SessionLocal()
+                        session.query(Document).filter_by(id=doc.id).delete()
+                        session.commit()
+                        session.close()
+                        if doc.id in st.session_state.selected_doc_ids:
+                            st.session_state.selected_doc_ids.remove(doc.id)
+                        st.session_state.rename_doc_id = None
+                        st.session_state.docs_dirty = True
+                        st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Modal for file content view ---
+    # --- Modal-like file content view using expander at the top ---
     if "view_doc_id" in st.session_state:
         doc = next((d for d in docs if d.id == st.session_state.view_doc_id), None)
         if doc:
-            with st.modal(f"Viewing: {doc.filename or doc.url or f'Document {doc.id}'}"):
+            with st.expander(f"Viewing: {doc.filename or doc.url or f'Document {doc.id}'}", expanded=True):
                 st.markdown(doc.ocr_text)
                 if st.button("Close", key="close_modal_btn"):
                     del st.session_state.view_doc_id
