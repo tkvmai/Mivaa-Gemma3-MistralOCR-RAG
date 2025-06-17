@@ -475,7 +475,6 @@ def main():
             doc_id_to_label[doc.id] = label
         label_to_doc_id = {v: k for k, v in doc_id_to_label.items()}
         valid_selected_doc_ids = [doc_id for doc_id in st.session_state.selected_doc_ids if doc_id in doc_id_to_label]
-        # Use a temp session state variable for the form selection
         if "temp_selected_doc_ids" not in st.session_state:
             st.session_state.temp_selected_doc_ids = valid_selected_doc_ids
         with st.form("doc_select_form"):
@@ -486,15 +485,36 @@ def main():
                 key="doc_multiselect"
             )
             confirm = st.form_submit_button("Confirm Selection")
-        # Always update the temp variable with the current form selection
         st.session_state.temp_selected_doc_ids = [label_to_doc_id[label] for label in temp_selected_labels]
-        # Only update the main selection on confirm
         if confirm:
             st.session_state.selected_doc_ids = st.session_state.temp_selected_doc_ids.copy()
+        # --- Scrollable file list with glass icon ---
+        st.markdown(
+            """
+            <style>
+            .scrollable-file-list {
+                max-height: 350px;
+                overflow-y: auto;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="scrollable-file-list">', unsafe_allow_html=True)
+        for doc in docs:
+            col1, col2, col3 = st.columns([1, 8, 1])
+            with col1:
+                st.write("📄" if (doc.filename and doc.filename.lower().endswith(".pdf")) else ("🖼️" if doc.filetype == "image_url" else "🌐"))
+            with col2:
+                st.write(doc.filename or doc.url or f"Document {doc.id}")
+            with col3:
+                if st.button("🔍", key=f"view_{doc.id}"):
+                    st.session_state.view_doc_id = doc.id
+        st.markdown('</div>', unsafe_allow_html=True)
         # 3-dot menu for rename/delete
         for doc in docs:
             menu_key = f"menu_{doc.id}"
-            st.markdown("---")  # Add a separator between items
+            st.markdown("---")
             col1, col2 = st.columns([1, 20])
             with col1:
                 if st.button("⋮", key=menu_key):
@@ -528,13 +548,21 @@ def main():
                             st.session_state.docs_dirty = True
                             st.rerun()
 
+    # --- Modal for file content view ---
+    if "view_doc_id" in st.session_state:
+        doc = next((d for d in docs if d.id == st.session_state.view_doc_id), None)
+        if doc:
+            with st.modal(f"Viewing: {doc.filename or doc.url or f'Document {doc.id}'}"):
+                st.markdown(doc.ocr_text)
+                if st.button("Close", key="close_modal_btn"):
+                    del st.session_state.view_doc_id
+
     with right_col:
         selected_docs = [d for d in docs if d.id in st.session_state.selected_doc_ids]
         if not selected_docs:
             st.info("Select one or more sources from the left pane to start chatting.")
         else:
             st.subheader(f"Chat with {len(selected_docs)} source(s)")
-            # Summary of selected sources
             st.markdown("**Selected sources:** " + ", ".join([d.filename or d.url or f"Document {d.id}" for d in selected_docs]))
             # Placeholder action buttons
             col_note, col_add_note, col_audio, col_mindmap = st.columns([1,1,1,1])
@@ -546,9 +574,6 @@ def main():
                 st.button("🔊 Audio Overview", key="audio_btn", disabled=True)
             with col_mindmap:
                 st.button("🗺️ Mind Map", key="mindmap_btn", disabled=True)
-            with st.expander("Document Content", expanded=False):
-                for d in selected_docs:
-                    st.markdown(f"**{d.filename or d.url or f'Document {d.id}'}**\n\n" + d.ocr_text)
             # Chat interface
             if "messages" not in st.session_state or st.session_state.get("last_doc_ids") != set(st.session_state.selected_doc_ids):
                 st.session_state.messages = []
