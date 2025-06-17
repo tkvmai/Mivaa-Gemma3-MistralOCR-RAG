@@ -494,9 +494,14 @@ def main():
         # 3-dot menu for rename/delete
         for doc in docs:
             menu_key = f"menu_{doc.id}"
-            if st.button("⋮", key=menu_key):
-                st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
-                st.session_state.rename_value = doc.filename or ""
+            st.markdown("---")  # Add a separator between items
+            col1, col2 = st.columns([1, 20])
+            with col1:
+                if st.button("⋮", key=menu_key):
+                    st.session_state.rename_doc_id = doc.id if st.session_state.rename_doc_id != doc.id else None
+                    st.session_state.rename_value = doc.filename or ""
+            with col2:
+                st.markdown(f"**{doc.filename or doc.url or f'Document {doc.id}'}**")
             if st.session_state.rename_doc_id == doc.id:
                 with st.container():
                     new_name = st.text_input("Rename file", value=st.session_state.rename_value, key=f"rename_input_{doc.id}")
